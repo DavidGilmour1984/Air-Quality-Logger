@@ -15,6 +15,15 @@
 #define SDA_PIN 21
 #define SCL_PIN 22
 
+/* ---------------- LED PINS ---------------- */
+
+#define LED_DATA 2
+#define LED_ERROR 4
+#define LED_GPS 13
+#define LED_CO2 12
+#define LED_PM 14
+#define LED_PRESSURE 27
+
 /* ---------------- OBJECTS ---------------- */
 
 HardwareSerial GPS(2);
@@ -38,8 +47,19 @@ int gpsValidCount = 0;
 unsigned long startTime = 0;
 unsigned long lastReadTime = 0;
 
+/* LED timing */
+unsigned long lastBlinkTime = 0;
+unsigned long lastDataFlash = 0;
+
+/* PMS watchdog */
+unsigned long lastPMSvalid = 0;
+
 float interval = 1.0;
-bool printTime = true;
+
+/* ---------------- LED STATE ---------------- */
+
+bool dataFlashActive = false;
+bool blinkWindow = false;
 
 /* ---------------- DATA ---------------- */
 
@@ -100,6 +120,8 @@ bool readPMS()
       pm25 = u16(6);
       pm10 = u16(8);
 
+      lastPMSvalid = millis();   // ✅ mark valid data
+
       return true;
     }
   }
@@ -130,6 +152,21 @@ void setup()
   GPS.begin(9600, SERIAL_8N1, GPS_RX, GPS_TX);
   PMS.begin(9600, SERIAL_8N1, PMS_RX, PMS_TX);
 
+  /* LED setup */
+  pinMode(LED_DATA, OUTPUT);
+  pinMode(LED_ERROR, OUTPUT);
+  pinMode(LED_GPS, OUTPUT);
+  pinMode(LED_CO2, OUTPUT);
+  pinMode(LED_PM, OUTPUT);
+  pinMode(LED_PRESSURE, OUTPUT);
+
+  digitalWrite(LED_DATA, LOW);
+  digitalWrite(LED_ERROR, LOW);
+  digitalWrite(LED_GPS, LOW);
+  digitalWrite(LED_CO2, LOW);
+  digitalWrite(LED_PM, LOW);
+  digitalWrite(LED_PRESSURE, LOW);
+
   startTime = millis();
 }
 
@@ -154,6 +191,8 @@ void loop()
 
     outputCSV(elapsed);
   }
+
+  updateLEDs();
 }
 
 /* ---------------- GPS ---------------- */
@@ -246,12 +285,10 @@ void handleSerial()
 
   if (commaIndex > 0)
   {
-    int resetFlag = input.substring(0, commaIndex).toInt();
     float newInterval = input.substring(commaIndex + 1).toFloat();
 
     startTime = millis();
     lastReadTime = 0;
-    printTime = (resetFlag == 1);
 
     if (newInterval >= 0.2) interval = newInterval;
   }
@@ -261,12 +298,13 @@ void handleSerial()
 
 void outputCSV(unsigned long elapsed)
 {
+  dataFlashActive = true;
+  lastDataFlash = millis();
+
   DateTime now = rtc.now();
 
   float lat = gps.location.isValid() ? gps.location.lat() : 0;
   float lon = gps.location.isValid() ? gps.location.lng() : 0;
-  int sats = gps.satellites.value();
-  float hdop = gps.hdop.hdop();
 
   Serial.printf(
     "%lu,%04d-%02d-%02d %02d:%02d:%02d,%.6f,%.6f,%d,%.2f,%.1f,%.1f,%.1f,%.1f,%.1f,%u,%u,%u,F\n",
@@ -274,8 +312,8 @@ void outputCSV(unsigned long elapsed)
     now.year(), now.month(), now.day(),
     now.hour(), now.minute(), now.second(),
     lat, lon,
-    sats,
-    hdop,
+    gps.satellites.value(),
+    gps.hdop.hdop(),
     co2,
     scdTemp,
     humidity,
@@ -285,4 +323,68 @@ void outputCSV(unsigned long elapsed)
     pm25,
     pm10
   );
+}
+
+/* ---------------- LED LOGIC ---------------- */
+
+void updateLEDs()
+{
+  unsigned long now = millis();
+
+  /* 5s heartbeat window */
+  if (now - lastBlinkTime > 5000)
+  {
+    lastBlinkTime = now;
+    blinkWindow = true;
+  }
+
+  bool flash = blinkWindow && (now - lastBlinkTime < 120);
+
+  if (now - lastBlinkTime > 120)
+  {
+    blinkWindow = false;
+  }
+
+  /* SENSOR STATES */
+  bool gpsValid =
+    gps.location.isValid() &&
+    gps.satellites.value() >= 4 &&
+    gps.hdop.hdop() <= 5.0;
+
+  bool scdValid = scdFound && co2 > 0;
+  bool bmpValid = bmpFound;
+  bool pmsValid = (now - lastPMSvalid < 5000);
+
+  /* ERROR LED */
+  bool error = (!scdValid || !bmpValid || !pmsValid);
+  digitalWrite(LED_ERROR, error ? HIGH : LOW);
+
+  /* GPS LED */
+  digitalWrite(LED_GPS, (!gpsValid) ? HIGH : (flash ? HIGH : LOW));
+
+  /* CO2 LED */
+  digitalWrite(LED_CO2, (!scdValid) ? HIGH : (flash ? HIGH : LOW));
+
+  /* PM LED */
+  digitalWrite(LED_PM, (!pmsValid) ? HIGH : (flash ? HIGH : LOW));
+
+  /* PRESSURE LED */
+  digitalWrite(LED_PRESSURE, (!bmpValid) ? HIGH : (flash ? HIGH : LOW));
+
+  if (dataFlashActive)
+{
+  if (now - lastDataFlash < 200)   // longer flash (200 ms)
+  {
+    digitalWrite(LED_DATA, HIGH);
+  }
+  else
+  {
+    digitalWrite(LED_DATA, LOW);
+    dataFlashActive = false;
+  }
+}
+else
+{
+  digitalWrite(LED_DATA, LOW);
+}
 }
