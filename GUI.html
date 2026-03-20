@@ -1,0 +1,888 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Sensor Log Visualiser</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/tz-lookup/tz.js"></script>
+<style>
+:root{
+  --bg:#f5f7fb;
+  --card:#ffffff;
+  --ink:#0f172a;
+  --muted:#64748b;
+  --accent:#2563eb;
+  --accentDark:#1e40af;
+  --border:#e2e8f0;
+  --shadow:0 10px 30px rgba(2,6,23,0.12);
+}
+
+*{box-sizing:border-box}
+
+body{
+  margin:0;
+  font-family:Helvetica,Arial,sans-serif;
+  background:var(--bg);
+  color:var(--ink);
+  overflow:hidden;
+}
+
+/* Top bar */
+#topbar{
+  position:absolute;
+  top:0; left:0; right:0;
+  height:64px;
+  background:rgba(255,255,255,0.86);
+  backdrop-filter:blur(10px);
+  border-bottom:1px solid var(--border);
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  padding:0 14px;
+  z-index:2000;
+}
+
+#brand{
+  display:flex;
+  flex-direction:column;
+  line-height:1.05;
+}
+#brand strong{font-size:16px}
+#brand span{font-size:12px;color:var(--muted)}
+
+#viewTabs{
+  display:flex;
+  gap:8px;
+  align-items:center;
+}
+
+.seg{
+  display:flex;
+  background:#eef2ff;
+  border:1px solid #dbeafe;
+  border-radius:12px;
+  padding:4px;
+  gap:4px;
+}
+.seg button{
+  border:0;
+  background:transparent;
+  padding:10px 14px;
+  border-radius:10px;
+  cursor:pointer;
+  font-size:14px;
+  color:#1e293b;
+}
+.seg button.active{
+  background:var(--accent);
+  color:white;
+  box-shadow:0 8px 20px rgba(37,99,235,0.25);
+}
+
+#openPanelBtn{
+  border:1px solid var(--border);
+  background:white;
+  padding:10px 12px;
+  border-radius:12px;
+  cursor:pointer;
+  font-size:14px;
+  color:#0f172a;
+}
+#openPanelBtn:hover{border-color:#cbd5e1}
+
+/* Main stage */
+#stage{
+  position:absolute;
+  top:64px; left:0; right:0; bottom:0;
+}
+
+/* Views */
+#mapView, #graphView{
+  position:absolute;
+  top:0; left:0; right:0; bottom:0;
+}
+
+#graphView{
+  display:none;
+  background:white;
+}
+
+#map{
+  height:100%;
+  width:100%;
+}
+
+/* Graph container */
+#graphWrap{
+  position:absolute;
+  top:0; left:0; right:0; bottom:0;
+  padding:18px;
+}
+#graphCard{
+  height:100%;
+  width:100%;
+  background:var(--card);
+  border:1px solid var(--border);
+  border-radius:18px;
+  box-shadow:var(--shadow);
+  display:flex;
+  flex-direction:column;
+}
+#graphHead{
+  padding:14px 16px;
+  border-bottom:1px solid var(--border);
+  display:flex;
+  gap:10px;
+  align-items:baseline;
+}
+#graphHead strong{font-size:16px}
+#graphHead span{font-size:12px;color:var(--muted)}
+#chartArea{
+  position:relative;
+  flex:1;
+  padding:10px 14px 40px 14px;
+}
+
+#chart{
+  position:absolute;
+  top:10px;
+  left:14px;
+  right:14px;
+  bottom:40px;
+}
+
+/* Slide-over panel */
+#drawer{
+  position:absolute;
+  top:64px;
+  left:0;
+  bottom:0;
+  width:min(360px, 92vw);
+  background:var(--card);
+  border-right:1px solid var(--border);
+  box-shadow:var(--shadow);
+  transform:translateX(-110%);
+  transition:transform 0.25s ease;
+  z-index:2500;
+  display:flex;
+  flex-direction:column;
+}
+
+#drawer.open{
+  transform:translateX(0);
+}
+
+#drawerHeader{
+  padding:14px 14px 12px 14px;
+  border-bottom:1px solid var(--border);
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+}
+
+#drawerHeader .title{
+  display:flex;
+  flex-direction:column;
+  line-height:1.15;
+}
+#drawerHeader .title strong{font-size:15px}
+#drawerHeader .title span{font-size:12px;color:var(--muted)}
+
+#closeBtn{
+  border:0;
+  background:#f1f5f9;
+  width:36px;
+  height:36px;
+  border-radius:12px;
+  cursor:pointer;
+  font-size:18px;
+  line-height:36px;
+}
+#closeBtn:hover{background:#e2e8f0}
+
+#drawerBody{
+  padding:14px;
+  overflow:auto;
+}
+
+.block{
+  background:#f8fafc;
+  border:1px solid var(--border);
+  border-radius:16px;
+  padding:12px;
+  margin-bottom:12px;
+}
+
+.block h3{
+  margin:0 0 10px 0;
+  font-size:13px;
+  color:#0f172a;
+  letter-spacing:0.2px;
+}
+
+#fileRow{
+  display:flex;
+  flex-direction:column;
+  gap:8px;
+}
+
+#csvFile{
+  width:100%;
+  font-size:14px;
+  padding:10px;
+  border-radius:12px;
+  border:1px solid #cbd5e1;
+  background:white;
+}
+
+.smallHint{
+  font-size:12px;
+  color:var(--muted);
+}
+
+#variables{
+  display:flex;
+  flex-direction:column;
+  gap:10px;
+  max-height:46vh;
+  overflow:auto;
+  padding-right:4px;
+}
+
+.radioRow{
+  display:flex;
+  gap:10px;
+  align-items:center;
+  padding:10px 10px;
+  border:1px solid #e2e8f0;
+  border-radius:14px;
+  background:white;
+  cursor:pointer;
+}
+.radioRow:hover{
+  border-color:#cbd5e1;
+}
+.radioRow input{
+  transform:scale(1.2);
+}
+
+#statusLine{
+  font-size:12px;
+  color:var(--muted);
+}
+
+/* Legend overlay on map */
+#legendBox{
+  position:absolute;
+  right:16px;
+  bottom:16px;
+  z-index:1200;
+  background:rgba(255,255,255,0.92);
+  border:1px solid var(--border);
+  border-radius:16px;
+  box-shadow:var(--shadow);
+  padding:12px 12px 10px 12px;
+  width:220px;
+  pointer-events:none;
+}
+
+#legendTitle{
+  font-weight:bold;
+  font-size:13px;
+  margin-bottom:6px;
+}
+
+#legendBar{
+  height:14px;
+  width:100%;
+  border-radius:10px;
+  background:linear-gradient(to right, blue, cyan, lime, yellow, red);
+  margin-bottom:6px;
+}
+
+#legendScale{
+  display:flex;
+  justify-content:space-between;
+  font-size:12px;
+  color:#334155;
+}
+
+/* Dimmer when drawer open on small screens */
+#scrim{
+  position:absolute;
+  top:64px; left:0; right:0; bottom:0;
+  background:rgba(2,6,23,0.35);
+  z-index:2400;
+  display:none;
+}
+#scrim.show{display:block}
+
+</style>
+</head>
+
+<body>
+
+<div id="topbar">
+  <div id="brand">
+    <strong>Sensor Log Visualiser</strong>
+  </div>
+
+  <div id="viewTabs">
+    <div class="seg">
+      <button id="btnMap" class="active" type="button">Map</button>
+      <button id="btnGraph" type="button">Graph</button>
+    </div>
+    <button id="openPanelBtn" type="button">Controls</button>
+  </div>
+</div>
+
+<div id="stage">
+  <div id="mapView">
+    <div id="map"></div>
+
+    <div id="legendBox">
+      <div id="legendTitle">Variable</div>
+      <div id="legendBar"></div>
+      <div id="legendScale">
+        <span id="legendMin">0</span>
+        <span id="legendMax">1</span>
+      </div>
+    </div>
+  </div>
+
+  <div id="graphView">
+    <div id="graphWrap">
+      <div id="graphCard">
+        <div id="graphHead">
+          <strong id="graphTitle">Graph</strong>
+          <span id="graphSub">Select a variable to plot vs time</span>
+        </div>
+        <div id="chartArea">
+          <canvas id="chart"></canvas>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="scrim"></div>
+
+<div id="drawer">
+  <div id="drawerHeader">
+    <div class="title">
+      <strong>Controls</strong>
+      <span>Load file + choose variable</span>
+    </div>
+    <button id="closeBtn" type="button">×</button>
+  </div>
+
+  <div id="drawerBody">
+
+    <div class="block">
+      <h3>Load file</h3>
+      <div id="fileRow">
+        <input type="file" id="csvFile" accept=".csv,.txt">
+        <div class="smallHint">Needs lat/lon (or latitude/longitude). Time uses gps_time, rtc_time, or time_s if present.</div>
+        <div id="statusLine">No file loaded.</div>
+      </div>
+    </div>
+
+    <div class="block">
+      <h3>Colour / Graph variable</h3>
+      <div id="variables"></div>
+      <div class="smallHint" style="margin-top:10px;">Choose any numeric column (excluding lat/lon/time).</div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+let map = L.map('map');
+let markersLayer = L.layerGroup().addTo(map);
+
+let data = [];
+let selectedVariables = [];
+let activeVariable = null;
+
+let latField = "lat";
+let lonField = "lon";
+let timeField = "rtc_time";
+
+let chart = null;
+let minValue = 0;
+let maxValue = 1;
+let timezone = null;
+
+L.tileLayer(
+  'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+  { attribution: '© OpenStreetMap contributors' }
+).addTo(map);
+
+/* ---------- UI: Drawer ---------- */
+const drawer = document.getElementById("drawer");
+const scrim = document.getElementById("scrim");
+
+function openDrawer(){
+  drawer.classList.add("open");
+  if(window.innerWidth < 900) scrim.classList.add("show");
+}
+function closeDrawer(){
+  drawer.classList.remove("open");
+  scrim.classList.remove("show");
+}
+
+document.getElementById("openPanelBtn").addEventListener("click", openDrawer);
+document.getElementById("closeBtn").addEventListener("click", closeDrawer);
+scrim.addEventListener("click", closeDrawer);
+
+openDrawer();
+
+/* ---------- UI: View switching ---------- */
+function setView(view){
+  const mapView = document.getElementById("mapView");
+  const graphView = document.getElementById("graphView");
+  const btnMap = document.getElementById("btnMap");
+  const btnGraph = document.getElementById("btnGraph");
+
+  if(view === "map"){
+    mapView.style.display = "block";
+    graphView.style.display = "none";
+    btnMap.classList.add("active");
+    btnGraph.classList.remove("active");
+    setTimeout(() => map.invalidateSize(), 50);
+  }else{
+    mapView.style.display = "none";
+    graphView.style.display = "block";
+    btnGraph.classList.add("active");
+    btnMap.classList.remove("active");
+    drawGraph();
+  }
+}
+
+document.getElementById("btnMap").addEventListener("click", ()=>setView("map"));
+document.getElementById("btnGraph").addEventListener("click", ()=>setView("graph"));
+
+setView("map");
+
+/* ---------- File load ---------- */
+document.getElementById("csvFile").addEventListener("change", e => {
+  const file = e.target.files[0];
+  if(!file) return;
+
+  document.getElementById("statusLine").innerText = "Loading…";
+
+  Papa.parse(file, {
+    header: false,
+    dynamicTyping: false,
+    skipEmptyLines: true,
+    complete: res => {
+      try{
+        const rows = res.data || [];
+        const parsed = parseESP32Rows(rows);
+
+        if(parsed.length === 0){
+          document.getElementById("statusLine").innerText = "No valid serial rows found.";
+          alert("No valid rows found. The file needs CSV/TXT lines in the ESP32 serial format.");
+          return;
+        }
+
+        data = parsed;
+        selectedVariables = [];
+        activeVariable = null;
+        markersLayer.clearLayers();
+
+        computeGPSSpeed();
+        buildVariableList();
+        zoomToData();
+        updateGraphHeader();
+        updateLegend(null);
+
+        document.getElementById("statusLine").innerText =
+          `Loaded ${data.length} rows from ${file.name}.`;
+
+        if(window.innerWidth < 900) closeDrawer();
+      }catch(err){
+        console.error(err);
+        document.getElementById("statusLine").innerText = "Could not read file.";
+        alert("Could not read the file in the expected ESP32 CSV/TXT format.");
+      }
+    }
+  });
+});
+
+/* ---------- Parser for ESP32 serial format ---------- */
+function parseESP32Rows(rows){
+  const out = [];
+
+  const expectedKeys = [
+    "elapsed",
+    "rtc_time",
+    "lat",
+    "lon",
+    "sats",
+    "hdop",
+    "co2",
+    "scdTemp",
+    "humidity",
+    "bmpTemp",
+    "pressure",
+    "pm1",
+    "pm25",
+    "pm10",
+    "flag"
+  ];
+
+  for(let i = 0; i < rows.length; i++){
+    let row = rows[i];
+
+    if(!row) continue;
+
+    if(typeof row === "string"){
+      row = row.split(",");
+    }
+
+    row = row.map(v => String(v ?? "").trim());
+
+    if(row.length === 1){
+      row = row[0].split(",").map(v => v.trim());
+    }
+
+    if(row.length < 14) continue;
+
+    const first = (row[0] || "").toLowerCase();
+    if(first === "elapsed" || first === "time" || first === "millis") continue;
+
+    if(!isNumeric(row[0])) continue;
+
+    const obj = {};
+
+    for(let c = 0; c < expectedKeys.length; c++){
+      obj[expectedKeys[c]] = row[c] !== undefined ? row[c] : "";
+    }
+
+    obj.elapsed = toNumber(obj.elapsed);
+    obj.lat = toNumber(obj.lat);
+    obj.lon = toNumber(obj.lon);
+    obj.sats = toNumber(obj.sats);
+    obj.hdop = toNumber(obj.hdop);
+    obj.co2 = toNumber(obj.co2);
+    obj.scdTemp = toNumber(obj.scdTemp);
+    obj.humidity = toNumber(obj.humidity);
+    obj.bmpTemp = toNumber(obj.bmpTemp);
+    obj.pressure = toNumber(obj.pressure);
+    obj.pm1 = toNumber(obj.pm1);
+    obj.pm25 = toNumber(obj.pm25);
+    obj.pm10 = toNumber(obj.pm10);
+
+    if(!Number.isFinite(obj.lat) || !Number.isFinite(obj.lon)) continue;
+
+    out.push(obj);
+  }
+
+  return out;
+}
+
+function isNumeric(v){
+  if(v === null || v === undefined) return false;
+  const s = String(v).trim();
+  if(s === "") return false;
+  return !isNaN(Number(s));
+}
+
+function toNumber(v){
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+/* ---------- Derived GPS speed ---------- */
+function computeGPSSpeed(){
+  const windowSize = 10;
+
+  function haversine(lat1, lon1, lat2, lon2){
+    const R = 6371000;
+    const toRad = d => d * Math.PI / 180;
+
+    const dLat = toRad(lat2 - lat1);
+    const dLon = toRad(lon2 - lon1);
+
+    const a =
+      Math.sin(dLat / 2) ** 2 +
+      Math.cos(toRad(lat1)) *
+      Math.cos(toRad(lat2)) *
+      Math.sin(dLon / 2) ** 2;
+
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return R * c;
+  }
+
+  for(let i = 0; i < data.length; i++){
+    if(i < windowSize){
+      data[i].gps_speed_ms = 0;
+      data[i].gps_speed_kmh = 0;
+      continue;
+    }
+
+    let dist = 0;
+    let dt = (data[i].elapsed - data[i - windowSize].elapsed) / 1000;
+
+    for(let j = i - windowSize + 1; j <= i; j++){
+      const p1 = data[j - 1];
+      const p2 = data[j];
+      dist += haversine(p1[latField], p1[lonField], p2[latField], p2[lonField]);
+    }
+
+    if(!Number.isFinite(dt) || dt <= 0) dt = windowSize;
+
+    const speed_ms = dist / dt;
+    data[i].gps_speed_ms = speed_ms;
+    data[i].gps_speed_kmh = speed_ms * 3.6;
+  }
+}
+
+/* ---------- Variable list ---------- */
+function buildVariableList(){
+  const container = document.getElementById("variables");
+  container.innerHTML = "";
+
+  if(!data || data.length === 0) return;
+
+  const ignore = [latField, lonField, timeField, "rtc_time", "flag"];
+
+  const first = data[0];
+
+  Object.keys(first).forEach(key => {
+    if(ignore.includes(key)) return;
+    if(typeof first[key] !== "number" || !Number.isFinite(first[key])) return;
+
+    const row = document.createElement("label");
+    row.className = "radioRow";
+
+    row.innerHTML = `
+      <input type="checkbox" value="${key}">
+      <div style="display:flex;flex-direction:column;gap:2px;">
+        <div style="font-size:14px;font-weight:bold;color:#0f172a;">${key}</div>
+        <div style="font-size:12px;color:#64748b;">numeric</div>
+      </div>
+    `;
+
+    const input = row.querySelector("input");
+
+    input.addEventListener("change", () => {
+      if(input.checked){
+        if(selectedVariables.length >= 2){
+          input.checked = false;
+          alert("Maximum of 2 variables allowed");
+          return;
+        }
+        selectedVariables.push(key);
+      }else{
+        selectedVariables = selectedVariables.filter(v => v !== key);
+      }
+
+      activeVariable = selectedVariables.length > 0 ? selectedVariables[0] : null;
+
+      updateGraphHeader();
+
+      if(selectedVariables.length > 0){
+        plotMarkers(selectedVariables[0]);
+        updateLegend(selectedVariables[0]);
+      }else{
+        markersLayer.clearLayers();
+        updateLegend(null);
+      }
+
+      drawGraph();
+    });
+
+    container.appendChild(row);
+  });
+}
+
+function updateGraphHeader(){
+  const title = document.getElementById("graphTitle");
+  const sub = document.getElementById("graphSub");
+
+  if(selectedVariables.length === 0){
+    title.innerText = "Graph";
+    sub.innerText = "Select variables to plot";
+    return;
+  }
+
+  title.innerText = selectedVariables.join(" + ");
+  sub.innerText = "Plotted against elapsed time (ms)";
+}
+
+/* ---------- Map ---------- */
+function zoomToData(){
+  if(!data.length) return;
+
+  const bounds = L.latLngBounds(data.map(d => [d[latField], d[lonField]]));
+  map.fitBounds(bounds, { padding: [40, 40] });
+  map.invalidateSize();
+
+  const lat = data[0][latField];
+  const lon = data[0][lonField];
+
+  try{
+    timezone = tzlookup(lat, lon);
+  }catch(e){
+    timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  }
+}
+
+function plotMarkers(variable){
+  markersLayer.clearLayers();
+  if(!variable) return;
+
+  const values = data
+    .map(d => d[variable])
+    .filter(v => typeof v === "number" && Number.isFinite(v));
+
+  if(values.length === 0) return;
+
+  minValue = Math.min(...values);
+  maxValue = Math.max(...values);
+
+  data.forEach(d => {
+    const v = d[variable];
+    if(typeof v !== "number" || !Number.isFinite(v)) return;
+
+    const t = (v - minValue) / (maxValue - minValue || 1);
+    const color = getColor(t);
+
+    let popup = "";
+    Object.keys(d).forEach(k => {
+      if(k === "rtc_time"){
+  popup += `<b>time</b>: ${d[k]}<br>`;
+}else{
+  popup += `<b>${k}</b>: ${d[k]}<br>`;
+}
+    });
+
+    const marker = L.circleMarker(
+      [d[latField], d[lonField]],
+      {
+        radius: 6,
+        color,
+        fillColor: color,
+        fillOpacity: 0.9
+      }
+    ).bindPopup(popup);
+
+    markersLayer.addLayer(marker);
+  });
+}
+
+/* ---------- Legend ---------- */
+function updateLegend(variable){
+  document.getElementById("legendTitle").innerText = variable || "Variable";
+  document.getElementById("legendMin").innerText = isFinite(minValue) ? minValue.toFixed(2) : "0";
+  document.getElementById("legendMax").innerText = isFinite(maxValue) ? maxValue.toFixed(2) : "1";
+}
+
+/* ---------- Graph ---------- */
+function drawGraph(){
+
+  const ctx = document.getElementById("chart");
+
+  if(chart){
+    chart.destroy();
+    chart = null;
+  }
+
+  if(selectedVariables.length === 0 || !data.length) return;
+
+  const labels = data.map(d => {
+
+    let t = d["rtc_time"];
+
+    if(typeof t === "string" && t.length > 5){
+
+      // Convert "YYYY-MM-DD HH:MM:SS" → Date
+      let ts = t.replace(" ", "T") + "Z";
+      const date = new Date(ts);
+
+      if(!isNaN(date)){
+        return date.toLocaleTimeString();
+      }
+    }
+
+    // fallback
+    return d["elapsed"];
+  });
+
+  const colors = ["#2563eb", "#ef4444"];
+
+  const datasets = selectedVariables.map((v, i) => ({
+    label: v,
+    data: data.map(d => d[v]),
+    borderColor: colors[i],
+    backgroundColor: colors[i],
+    borderWidth: 3,
+    pointRadius: 0,
+    tension: 0.2,
+    yAxisID: i === 0 ? "y" : "y1"
+  }));
+
+  chart = new Chart(ctx, {
+    type: "line",
+    data: {
+      labels,
+      datasets
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: true }
+      },
+      scales: {
+        x: {
+          ticks: {
+            autoSkip: true,
+            maxRotation: 90,
+            minRotation: 90
+          },
+          title: {
+            display: true,
+            text: "RTC Time"
+          }
+        },
+        y: {
+          type: "linear",
+          position: "left",
+          title: {
+            display: true,
+            text: selectedVariables[0] || ""
+          }
+        },
+        y1: {
+          type: "linear",
+          position: "right",
+          grid: {
+            drawOnChartArea: false
+          },
+          title: {
+            display: true,
+            text: selectedVariables[1] || ""
+          }
+        }
+      }
+    }
+  });
+}
+/* ---------- Colour ---------- */
+function getColor(t){
+  const hue = 240 - 240 * t;
+  return `hsl(${hue},100%,45%)`;
+}
+</script>
+
+</body>
+</html>
