@@ -4,10 +4,10 @@
 This project is an ESP32-based environmental data logger that outputs sensor data as CSV over serial and logs it using an OpenLog module.
 
 Sensors included:
-- GPS (position + time)
+- GPS L80R (position + time)
 - SCD41 (CO₂, temperature, humidity)
 - BMP280 (pressure + temperature)
-- PMS5003 (PM1, PM2.5, PM10)
+- PMS7003 (PM1, PM2.5, PM10)
 - DS3231 RTC (time backup)
 
 ---
