@@ -10,7 +10,7 @@ It integrates:
 - Atmospheric pressure
 - Particulate matter (PM1, PM2.5, PM10)
 
-The system also includes a **multi-LED status system** for real-time diagnostics.
+The system uses an **OpenLog module to record all data to an SD card** and includes a **multi-LED status system** for real-time diagnostics.
 
 ---
 
@@ -31,6 +31,12 @@ The system also includes a **multi-LED status system** for real-time diagnostics
 
 ---
 
+### Data Logger (Required)
+
+- OpenLog (SparkFun OpenLog or compatible)
+
+---
+
 ### Connections
 
 #### I2C Bus
@@ -44,6 +50,13 @@ The system also includes a **multi-LED status system** for real-time diagnostics
 #### PMS Sensor (UART1)
 - RX → GPIO 16  
 - TX → GPIO 17  
+
+#### OpenLog (Serial Logging)
+
+- ESP32 TX (Serial output) → OpenLog RX  
+- ESP32 GND → OpenLog GND  
+
+(OpenLog TX is not required)
 
 ---
 
@@ -60,6 +73,6 @@ The system also includes a **multi-LED status system** for real-time diagnostics
 
 ---
 
-## Output Format (CSV)
+## OpenLog Configuration
 
-Each line outputs:
+The OpenLog must be configured correctly to ensure clean CSV logging.
