@@ -478,43 +478,56 @@ document.getElementById("csvFile").addEventListener("change", e => {
   document.getElementById("statusLine").innerText = "Loading…";
 
   Papa.parse(file, {
-    header: false,
-    dynamicTyping: false,
-    skipEmptyLines: true,
-    complete: res => {
-      try{
-        const rows = res.data || [];
-        const parsed = parseESP32Rows(rows);
+  header: true,
+  dynamicTyping: true,
+  skipEmptyLines: true,
 
-        if(parsed.length === 0){
-          document.getElementById("statusLine").innerText = "No valid serial rows found.";
-          alert("No valid rows found. The file needs CSV/TXT lines in the ESP32 serial format.");
-          return;
-        }
+  complete: function(results) {
 
-        data = parsed;
-        selectedVariables = [];
-        activeVariable = null;
-        markersLayer.clearLayers();
+    // ===== CLEAN DATA =====
+    let raw = results.data;
 
-        computeGPSSpeed();
-        buildVariableList();
-        zoomToData();
-        updateGraphHeader();
-        updateLegend(null);
+    data = raw.filter(row => {
 
-        document.getElementById("statusLine").innerText =
-          `Loaded ${data.length} rows from ${file.name}.`;
+      if (!row || Object.keys(row).length === 0) return false;
 
-        if(window.innerWidth < 900) closeDrawer();
-      }catch(err){
-        console.error(err);
-        document.getElementById("statusLine").innerText = "Could not read file.";
-        alert("Could not read the file in the expected ESP32 CSV/TXT format.");
-      }
+      let lat = Number(row.lat);
+      let lon = Number(row.lon);
+
+      if (
+        !Number.isFinite(lat) ||
+        !Number.isFinite(lon) ||
+        lat === 0 || lon === 0
+      ) return false;
+
+      return true;
+    });
+
+    if (data.length === 0) {
+      document.getElementById("statusLine").innerText = "No valid data found";
+      return;
     }
-  });
+
+    // ===== DERIVED DATA =====
+    computeGPSSpeed();
+
+    // ===== BUILD UI =====
+    buildVariableList();
+
+    // ===== MAP =====
+    zoomToData();
+
+    // ===== RESET SELECTION =====
+    selectedVariables = [];
+    activeVariable = null;
+
+    // ===== STATUS =====
+    document.getElementById("statusLine").innerText =
+      data.length + " valid points loaded";
+  }
 });
+});
+
 
 /* ---------- Parser for ESP32 serial format ---------- */
 function parseESP32Rows(rows){
@@ -737,12 +750,13 @@ function zoomToData(){
 }
 
 function plotMarkers(variable){
+
   markersLayer.clearLayers();
   if(!variable) return;
 
   const values = data
-    .map(d => d[variable])
-    .filter(v => typeof v === "number" && Number.isFinite(v));
+    .map(d => Number(d[variable]))
+    .filter(v => Number.isFinite(v));
 
   if(values.length === 0) return;
 
@@ -750,23 +764,40 @@ function plotMarkers(variable){
   maxValue = Math.max(...values);
 
   data.forEach(d => {
-    const v = d[variable];
-    if(typeof v !== "number" || !Number.isFinite(v)) return;
+
+    const lat = Number(d[latField]);
+    const lon = Number(d[lonField]);
+    const v = Number(d[variable]);
+
+    if(
+      !Number.isFinite(lat) ||
+      !Number.isFinite(lon) ||
+      lat === 0 || lon === 0 ||
+      !Number.isFinite(v)
+    ) return;
 
     const t = (v - minValue) / (maxValue - minValue || 1);
     const color = getColor(t);
 
+    // ===== BUILD POPUP CONTENT =====
     let popup = "";
-    Object.keys(d).forEach(k => {
-      if(k === "rtc_time"){
-  popup += `<b>time</b>: ${d[k]}<br>`;
-}else{
-  popup += `<b>${k}</b>: ${d[k]}<br>`;
-}
+
+    Object.keys(d).forEach(key => {
+
+      let value = d[key];
+
+      if(value === null || value === undefined) return;
+
+      // Format numbers nicely
+      if(typeof value === "number"){
+        value = value.toFixed(3);
+      }
+
+      popup += `<b>${key}</b>: ${value}<br>`;
     });
 
     const marker = L.circleMarker(
-      [d[latField], d[lonField]],
+      [lat, lon],
       {
         radius: 6,
         color,
@@ -803,8 +834,6 @@ function drawGraph(){
     let t = d["rtc_time"];
 
     if(typeof t === "string" && t.length > 5){
-
-      // Convert "YYYY-MM-DD HH:MM:SS" → Date
       let ts = t.replace(" ", "T") + "Z";
       const date = new Date(ts);
 
@@ -813,22 +842,29 @@ function drawGraph(){
       }
     }
 
-    // fallback
     return d["elapsed"];
   });
 
   const colors = ["#2563eb", "#ef4444"];
 
-  const datasets = selectedVariables.map((v, i) => ({
-    label: v,
-    data: data.map(d => d[v]),
-    borderColor: colors[i],
-    backgroundColor: colors[i],
-    borderWidth: 3,
-    pointRadius: 0,
-    tension: 0.2,
-    yAxisID: i === 0 ? "y" : "y1"
-  }));
+  const datasets = selectedVariables.map((v, i) => {
+
+    const values = data.map(d => {
+      let val = Number(d[v]);
+      return Number.isFinite(val) ? val : null;
+    });
+
+    return {
+      label: v,
+      data: values,
+      borderColor: colors[i],
+      backgroundColor: colors[i],
+      borderWidth: 3,
+      pointRadius: 0,
+      tension: 0.2,
+      yAxisID: i === 0 ? "y" : "y1"
+    };
+  });
 
   chart = new Chart(ctx, {
     type: "line",
@@ -851,7 +887,7 @@ function drawGraph(){
           },
           title: {
             display: true,
-            text: "RTC Time"
+            text: "Time"
           }
         },
         y: {
